@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package coder;
+
+option go_package = "./protos/go";
+
+service CoderService {
+  rpc ExecuteCode (CodeRequest) returns (stream CodeResponse);
+}
+
+message CodeRequest {
+  string systemPrompt = 1;
+  string userPrompt = 2;
+  string workingDirectory = 3;
+  string dockerImage = 4;
+  int32 maxRetry = 5;
+  string LLMModel = 6;
+}
+
+message CodeResponse {
+  string data = 1;
+}

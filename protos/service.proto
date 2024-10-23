@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package computation;
+
+option go_package = "./protos/go";
+
+service StreamService {
+  rpc StreamData (StreamRequest) returns (stream StreamResponse);
+}
+
+message StreamRequest {
+    string query = 1;
+}
+
+message StreamResponse {
+    string data = 1;
+}
