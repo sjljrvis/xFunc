@@ -4,52 +4,46 @@ import (
 	"codexec/config"
 	"codexec/lib"
 	"codexec/lib/agent"
-	"context"
+	"codexec/types"
 	"fmt"
 	"log"
 	"math/rand"
-	"sync"
 	"time"
 )
 
-type Task struct {
-	id               int
-	systemPrompt     string
-	userPrompt       string
-	workingDirectory string
-	dockerImage      string
-	maxRetry         int32
-	llmModel         string
-	completeSignal   chan<- bool
-	Logger           *log.Logger
-	Context          context.Context
-	Cancel           context.CancelFunc
-	// response         chan<- *pb.CodeResponse
+type WorkerPoolAdapter struct {
+	types.WorkerPool
 }
 
-type WorkerPool struct {
-	tasks chan Task
-	wg    sync.WaitGroup
+type TaskAdapter struct {
+	types.Task
 }
 
-func NewWorkerPool(numWorkers int) *WorkerPool {
-	pool := &WorkerPool{
-		tasks: make(chan Task),
+func NewWorkerPool(numWorkers int) *WorkerPoolAdapter {
+	pool := &WorkerPoolAdapter{
+		WorkerPool: types.WorkerPool{
+			Tasks: make(chan types.Task),
+		},
 	}
 	for i := 1; i <= numWorkers; i++ {
-		pool.wg.Add(1)
+		pool.Wg.Add(1)
 		go pool.worker(i)
 	}
 	return pool
 }
 
-func (p *WorkerPool) SubmitTask(task Task) {
-	p.tasks <- task
+func (t *TaskAdapter) Complete() {
+	t.CompleteSignal <- true
 }
 
-func (p *WorkerPool) Close() {
-	close(p.tasks)
-	p.wg.Wait()
+func (p *WorkerPoolAdapter) SubmitTask(task types.Task) {
+	log.Printf("[WORKER] (%d) queued", task.Id)
+	p.Tasks <- task
+}
+
+func (p *WorkerPoolAdapter) Close() {
+	close(p.Tasks)
+	p.Wg.Wait()
 }
 
 func GenerateRandomID() int {
@@ -57,50 +51,43 @@ func GenerateRandomID() int {
 	return rand.Intn(1000000) + 1
 }
 
-func (p *WorkerPool) worker(workerID int) {
-	defer p.wg.Done()
-	for task := range p.tasks {
+func (p *WorkerPoolAdapter) worker(workerID int) {
+	defer p.Wg.Done()
 
+	for task := range p.Tasks {
 		select {
 		case <-task.Context.Done():
-			log.Printf("Task %d cancelled before execution", task.id)
-			task.completeSignal <- true
-			continue
+			log.Printf("[WORKER] client disconnected, cancelling task (%d)", task.Id)
+			break
 		default:
-		}
+			log.Printf("[WORKER] (%d) running", task.Id)
+			containerName := lib.GetContainerName(12)
+			// Creating a blank dir
+			// hostDir := fmt.Sprintf("%s%s", config.Data.Get("app.codingDirectory").(string), task.workingDirectory)
+			hostDir := fmt.Sprintf("%s%s", config.Data.Get("app.codingDirectory").(string), containerName)
 
-		containerName := lib.GetContainerName(12)
-		// Creating a blank dir
-		// hostDir := fmt.Sprintf("%s%s", config.Data.Get("app.codingDirectory").(string), task.workingDirectory)
-		hostDir := fmt.Sprintf("%s%s", config.Data.Get("app.codingDirectory").(string), containerName)
+			coder := agent.New()
 
-		coder := agent.CoderAgent{
-			SystemPrompt:        task.systemPrompt,
-			UserPrompt:          task.userPrompt,
-			DockerImage:         task.dockerImage,
-			DockerContainerName: containerName,
-			LLMModel:            task.llmModel,
-			MaxRetry:            task.maxRetry,
-			WorkingDirectory:    hostDir,
-			MaxTimeOut:          1,
-			Logger:              task.Logger,
-			Instrumentation:     agent.InstrumentationStats{},
-			Context:             task.Context,
-		}
-
-		coder.StartTimer()
-
-		go func() {
-			select {
-			case <-task.Context.Done():
-				log.Printf("Task %d cancelled during execution", task.id)
-				// Perform any necessary cleanup here
-				coder.EndTimer()
-				task.completeSignal <- true
+			coder = &agent.AgentAdapter{
+				CoderAgent: types.CoderAgent{
+					SystemPrompt:        task.SystemPrompt,
+					UserPrompt:          task.UserPrompt,
+					DockerImage:         task.DockerImage,
+					DockerContainerName: containerName,
+					LLMModel:            task.LLMModel,
+					MaxRetry:            task.MaxRetry,
+					WorkingDirectory:    hostDir,
+					MaxTimeOut:          1,
+					Logger:              task.Logger,
+					Instrumentation:     types.InstrumentationStats{},
+					Context:             task.Context,
+					Canel:               task.Cancel,
+					Task:                &task,
+				},
 			}
-		}()
-		coder.Run()
-		coder.EndTimer()
-		task.completeSignal <- true
+			coder.StartTimer()
+			coder.Run()
+			coder.EndTimer()
+		}
 	}
 }

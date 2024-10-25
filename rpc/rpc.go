@@ -3,6 +3,7 @@ package rpc
 import (
 	"codexec/logger"
 	pb "codexec/protos/go"
+	"codexec/types"
 	"context"
 	"log"
 	"net"
@@ -12,12 +13,12 @@ import (
 
 type CoderServiceServer struct {
 	pb.UnimplementedCoderServiceServer
-	workerPool *WorkerPool
+	workerPool *WorkerPoolAdapter
 }
 
 func (s *CoderServiceServer) ExecuteCode(req *pb.CodeRequest, stream pb.CoderService_ExecuteCodeServer) error {
-	completeSignal := make(chan bool, 1)
-	defer close(completeSignal)
+	CompleteSignal := make(chan bool, 1)
+	defer close(CompleteSignal)
 
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
@@ -25,43 +26,39 @@ func (s *CoderServiceServer) ExecuteCode(req *pb.CodeRequest, stream pb.CoderSer
 	streamWriter := logger.NewCodeStreamWriter(stream)
 	streamLogger := log.New(streamWriter, "", 0)
 
-	task := Task{
-		id:               GenerateRandomID(),
-		completeSignal:   completeSignal,
-		systemPrompt:     req.SystemPrompt,
-		userPrompt:       req.UserPrompt,
-		workingDirectory: req.WorkingDirectory,
-		dockerImage:      req.DockerImage,
-		maxRetry:         req.MaxRetry,
-		llmModel:         req.LLMModel,
+	task := types.Task{
+		Id:               GenerateRandomID(),
+		CompleteSignal:   CompleteSignal,
+		SystemPrompt:     req.SystemPrompt,
+		UserPrompt:       req.UserPrompt,
+		WorkingDirectory: req.WorkingDirectory,
+		DockerImage:      req.DockerImage,
+		MaxRetry:         req.MaxRetry,
+		LLMModel:         req.LLMModel,
 		Logger:           streamLogger,
 		Context:          ctx,
 		Cancel:           cancel,
 	}
 
 	s.workerPool.SubmitTask(task)
-
 	select {
-	case <-completeSignal:
+	case <-CompleteSignal:
+		log.Printf("[WORKER] (%d) finished", task.Id)
 		return nil
 	case <-ctx.Done():
-		// Client disconnected
-		log.Printf("Client disconnected, cancelling task %d", task.id)
+		log.Printf("[RPC] client disconnected, cancelling task (%d)", task.Id)
 		return ctx.Err()
 	}
-
-	// <-completeSignal
-	// return nil
 }
 
 func StartRPCServer() {
+
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
 	workerPool := NewWorkerPool(2)
-
 	defer workerPool.Close()
 
 	grpcServer := grpc.NewServer()
