@@ -53,7 +53,7 @@ func (coder *AgentAdapter) Run() {
 	log.Printf("[CODER] (%d) running task", coder.Task.Id)
 	llm, err := openai.New(openai.WithModel(coder.LLMModel))
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	coder.Conversation = append(coder.Conversation, llms.TextParts(llms.ChatMessageTypeSystem, coder.SystemPrompt))
@@ -66,20 +66,13 @@ conversationStart:
 	default:
 		coder.Logger.Println("-------------------------------------------------------------------------------------------------------")
 		coder.Logger.Println("[CODER] : Thinking ...")
-		var buffer strings.Builder
-		completion, _ := llm.GenerateContent(ctx, coder.Conversation, llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
 
-			buffer.Write(chunk)
-			if strings.Contains(string(chunk), "\n") || strings.Contains(string(chunk), "TERMINATE") {
-				// _msg := strings.TrimRight(buffer.String(), "\n")
-				// coder.Logger.Print(red, italic, _msg, reset)
-				buffer.Reset()
-			}
+		completion, _ := llm.GenerateContent(ctx, coder.Conversation, llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
 			return nil
 		}))
 
 		if ctx.Err() == nil {
-			fmt.Println(ctx.Err())
+			fmt.Sprintln(ctx.Err(), err)
 			msgContent := completion.Choices[0].Content
 			coder.TrackTokens(msgContent)
 
@@ -97,7 +90,7 @@ conversationStart:
 					WorkingDirectory: coder.WorkingDirectory,
 					DockerImage:      coder.DockerImage,
 					Context:          coder.Context,
-					Cancel:           coder.Canel,
+					Cancel:           coder.Cancel,
 				}
 
 				dockerExecReponse := dockerexecutor.Run(dockerExecuteParams)

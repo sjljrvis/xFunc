@@ -26,7 +26,7 @@ type CoderAgent struct {
 	Logger              *log.Logger
 	Instrumentation     InstrumentationStats
 	Context             context.Context
-	Canel               context.CancelFunc
+	Cancel              context.CancelFunc
 	Task                *Task
 }
 

@@ -30,7 +30,37 @@ type DockerExecuteResponse struct {
 	Stdout   string
 }
 
+type ExecutorError struct {
+	Code string
+}
+
+func handlePanic(params DockerExecuteParams) {
+	if r := recover(); r != nil {
+		cli, _ := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		ctx := context.Background()
+
+		if error, ok := r.(ExecutorError); ok {
+			switch error.Code {
+			case "docker:container:start", "docker:container:execCreate", "docker:container:execAttach", "docker:container:stdcopy", "docker:container:execInspect", "docker:container:stop":
+				log.Println("[EXECUTOR] error starting container")
+				cli.ContainerRemove(ctx, params.ContainerName, container.RemoveOptions{Force: true})
+				break
+
+			case "docker:container:remove":
+				log.Println("[EXECUTOR] error removing container")
+				cli.ContainerRemove(ctx, params.ContainerName, container.RemoveOptions{})
+				break
+			default:
+				log.Printf("[EXECUTOR] Default %s", error.Code)
+			}
+		}
+	}
+}
+
 func Run(params DockerExecuteParams) DockerExecuteResponse {
+
+	defer handlePanic(params)
+
 	log.Println("[EXECUTOR] - spawning docker-container")
 	var executeResponse DockerExecuteResponse
 	ctx := params.Context
@@ -43,7 +73,6 @@ func Run(params DockerExecuteParams) DockerExecuteResponse {
 		return executeResponse
 
 	default:
-
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 		if err != nil {
 			log.Printf("Failed to create Docker client: %v", err)
@@ -72,12 +101,12 @@ func Run(params DockerExecuteParams) DockerExecuteResponse {
 		log.Printf("[EXECUTOR] - container creating")
 		resp, err := cli.ContainerCreate(ctx, containerConfig, containerHostConfig, nil, nil, params.ContainerName)
 		if err != nil {
-			log.Printf("Error creating container: %v", err)
+			panic(ExecutorError{Code: "docker:container:create"})
 		}
 
 		log.Printf("[EXECUTOR] - container starting")
 		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-			log.Printf("Error starting container: %v", err)
+			panic(ExecutorError{Code: "docker:container:start"})
 		}
 
 		commands := lib.GenerateCommands(params.WorkingDirectory)
@@ -98,16 +127,14 @@ func Run(params DockerExecuteParams) DockerExecuteResponse {
 			log.Printf("[EXECUTOR] - container exec ")
 			execID, err := cli.ContainerExecCreate(ctx, resp.ID, execConfig)
 			if err != nil {
-				log.Printf("Error creating exec: %s\n", err)
-				continue
+				panic(ExecutorError{Code: "docker:container:execCreate"})
 			}
 
 			// Start the exec instance
 			log.Printf("[EXECUTOR] - container exec attach ")
 			execResp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
 			if err != nil {
-				log.Printf("Error starting exec: %s\n", err)
-				continue
+				panic(ExecutorError{Code: "docker:container:execAttach"})
 			}
 
 			var buf bytes.Buffer
@@ -117,14 +144,13 @@ func Run(params DockerExecuteParams) DockerExecuteResponse {
 
 			_, err = stdcopy.StdCopy(logFile, logFile, execResp.Reader)
 			if err != nil {
-				log.Printf("Error copying output: %s\n", err)
+				panic(ExecutorError{Code: "docker:container:stdcopy"})
 			}
 
 			// Inspect the exec instance to get the exit code
 			inspectResp, err := cli.ContainerExecInspect(ctx, execID.ID)
 			if err != nil {
-				log.Printf("Error inspecting exec: %s\n", err)
-				continue
+				panic(ExecutorError{Code: "docker:container:execInspect"})
 			}
 
 			executeResponse.ExitCode = inspectResp.ExitCode
@@ -139,13 +165,13 @@ func Run(params DockerExecuteParams) DockerExecuteResponse {
 		log.Printf("[EXECUTOR] - container stop ")
 		err = cli.ContainerStop(ctx, params.ContainerName, container.StopOptions{})
 		if err != nil {
-			log.Printf("Error stoping container: %v", err)
+			panic(ExecutorError{Code: "docker:container:stop"})
 		}
 
 		log.Printf("[EXECUTOR] - container remove ")
 		err = cli.ContainerRemove(ctx, params.ContainerName, container.RemoveOptions{})
 		if err != nil {
-			log.Printf("Error creating container: %v", err)
+			panic(ExecutorError{Code: "docker:container:remove"})
 		}
 		return executeResponse
 	}

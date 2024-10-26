@@ -5,6 +5,7 @@ proto:
 	python3 -m grpc_tools.protoc -I./protos --python_out=sample-python-client --grpc_python_out=sample-python-client ./protos/service.proto
 
 clean: 
+	truncate -s 0 app.log
 	rm -rf tmp coding
 
 python:

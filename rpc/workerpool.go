@@ -52,7 +52,9 @@ func GenerateRandomID() int {
 }
 
 func (p *WorkerPoolAdapter) worker(workerID int) {
-	defer p.Wg.Done()
+	defer func() {
+		p.Wg.Done()
+	}()
 
 	for task := range p.Tasks {
 		select {
@@ -81,7 +83,7 @@ func (p *WorkerPoolAdapter) worker(workerID int) {
 					Logger:              task.Logger,
 					Instrumentation:     types.InstrumentationStats{},
 					Context:             task.Context,
-					Canel:               task.Cancel,
+					Cancel:              task.Cancel,
 					Task:                &task,
 				},
 			}
